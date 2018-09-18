@@ -83,6 +83,7 @@ type Audio struct {
 	Title     string `json:"title,omitempty"`
 	Performer string `json:"performer,omitempty"`
 	MIME      string `json:"mime_type,omitempty"`
+	Thumbnail *Photo `json:"thumb,omitempty"`
 }
 
 // Document object represents a general file (as opposed to Photo or Audio).

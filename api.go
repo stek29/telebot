@@ -144,14 +144,20 @@ func (b *Bot) sendFiles(
 	return json, nil
 }
 
-func (b *Bot) sendObject(f *File, what string, params map[string]string) (*Message, error) {
+func (b *Bot) sendObject(f *File, what string, params map[string]string, moreFiles map[string]*File) (*Message, error) {
 	sendWhat := "send" + strings.Title(what)
 
 	if what == "videoNote" {
 		what = "video_note"
 	}
 
-	respJSON, err := b.sendFiles(sendWhat, map[string]File{what: *f}, params)
+	files := map[string]File{what: *f}
+
+	for name, f := range moreFiles {
+		files[name] = *f
+	}
+
+	respJSON, err := b.sendFiles(sendWhat, files, params)
 	if err != nil {
 		return nil, err
 	}
