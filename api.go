@@ -40,37 +40,79 @@ func (b *Bot) Raw(method string, payload interface{}) ([]byte, error) {
 	return json, nil
 }
 
+func addFileToWriter(writer *multipart.Writer, fieldName string, file interface{}) error {
+	var fileReader io.Reader
+	var part io.Writer
+
+	if reader, ok := file.(io.Reader); ok {
+		var err error
+
+		part, err = writer.CreateFormField(fieldName)
+		if err != nil {
+			return err
+		}
+
+		fileReader = reader
+	} else if path, ok := file.(string); ok {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		fileReader = f
+
+		part, err = writer.CreateFormFile(fieldName, filepath.Base(path))
+		if err != nil {
+			return err
+		}
+	} else {
+		return errors.Errorf("File for field `%v` should be an io.Reader or string", fieldName)
+	}
+
+	_, err := io.Copy(part, fileReader)
+	return err
+}
+
 func (b *Bot) sendFiles(
 	method string,
-	files map[string]string,
+	files map[string]File,
 	params map[string]string) ([]byte, error) {
 	// ---
 	body := &bytes.Buffer{}
+	rawFiles := map[string]interface{}{}
+
+	for name, f := range files {
+		switch {
+		case f.InCloud():
+			params[name] = f.FileID
+		case f.FileURL != "":
+			params[name] = f.FileURL
+		case f.OnDisk():
+			rawFiles[name] = f.FileLocal
+		case f.FileReader != nil:
+			rawFiles[name] = f.FileReader
+		default:
+			return nil, errors.Errorf("sendFiles: File for field %s doesn't exist", name)
+		}
+	}
+
+	if len(rawFiles) == 0 {
+		return b.Raw(method, params)
+	}
+
 	writer := multipart.NewWriter(body)
 
-	for name, path := range files {
-		if err := func() error {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			part, err := writer.CreateFormFile(name, filepath.Base(path))
-			if err != nil {
-				return err
-			}
-
-			_, err = io.Copy(part, file)
-			return err
-		} (); err != nil {
+	for field, file := range rawFiles {
+		if err := addFileToWriter(writer, field, file); err != nil {
 			return nil, wrapSystem(err)
 		}
-
 	}
 
 	for field, value := range params {
-		writer.WriteField(field, value)
+		if err := writer.WriteField(field, value); err != nil {
+			return nil, wrapSystem(err)
+		}
 	}
 
 	if err := writer.Close(); err != nil {
@@ -109,20 +151,7 @@ func (b *Bot) sendObject(f *File, what string, params map[string]string) (*Messa
 		what = "video_note"
 	}
 
-	var respJSON []byte
-	var err error
-
-	if f.InCloud() {
-		params[what] = f.FileID
-		respJSON, err = b.Raw(sendWhat, params)
-	} else if f.FileURL != "" {
-		params[what] = f.FileURL
-		respJSON, err = b.Raw(sendWhat, params)
-	} else {
-		respJSON, err = b.sendFiles(sendWhat,
-			map[string]string{what: f.FileLocal}, params)
-	}
-
+	respJSON, err := b.sendFiles(sendWhat, map[string]File{what: *f}, params)
 	if err != nil {
 		return nil, err
 	}
